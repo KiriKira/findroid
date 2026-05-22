@@ -158,6 +158,29 @@ class JellyfinRepositoryImpl(
             .flow
     }
 
+    override suspend fun getRandomItem(
+        parentId: UUID?,
+        includeTypes: List<BaseItemKind>,
+        recursive: Boolean,
+        excludeItemIds: Set<UUID>,
+    ): FindroidItem? =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    includeItemTypes = includeTypes,
+                    recursive = recursive,
+                    sortBy = listOf(ItemSortBy.RANDOM),
+                    limit = 50,
+                    fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
+                )
+                .content
+                .items
+                .mapNotNull { it.toFindroidItem(this@JellyfinRepositoryImpl, database) }
+                .firstOrNull { it.id !in excludeItemIds }
+        }
+
     override suspend fun getPerson(personId: UUID): FindroidPerson =
         withContext(Dispatchers.IO) {
             jellyfinApi.userLibraryApi

@@ -1,0 +1,125 @@
+name: Android Release APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - random-playback-*
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-release:
+    name: Build, sign, and release phone APKs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build release APKs
+        run: ./gradlew :app:phone:assembleLibreRelease
+
+      - name: Prepare signing keystore
+        env:
+          FINDROID_KEYSTORE: ${{ secrets.FINDROID_KEYSTORE }}
+          FINDROID_KEYSTORE_PASSWORD: ${{ secrets.FINDROID_KEYSTORE_PASSWORD }}
+          FINDROID_KEY_ALIAS: ${{ secrets.FINDROID_KEY_ALIAS }}
+          FINDROID_KEY_PASSWORD: ${{ secrets.FINDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FINDROID_KEYSTORE" ] && [ -n "$FINDROID_KEYSTORE_PASSWORD" ] && [ -n "$FINDROID_KEY_ALIAS" ] && [ -n "$FINDROID_KEY_PASSWORD" ]; then
+            printf '%s' "$FINDROID_KEYSTORE" | base64 --decode > release.keystore
+            echo "KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$FINDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$FINDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$FINDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+          elif [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
+            echo "KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+          else
+            keytool -genkeypair \
+              -keystore release.keystore \
+              -storepass android \
+              -keypass android \
+              -alias ci-key \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Findroid CI,O=Findroid,C=US"
+            echo "KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=ci-key" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
+          fi
+
+      - name: Sign release APKs
+        run: |
+          set -euo pipefail
+          build_tools_dir=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          mkdir -p signed-apks aligned-apks
+          shopt -s nullglob
+          apks=(app/phone/build/outputs/apk/libre/release/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No release APKs found" >&2
+            exit 1
+          fi
+          for apk in "${apks[@]}"; do
+            filename=$(basename "$apk")
+            filename=${filename/phone/findroid}
+            filename=${filename/-unsigned/}
+            aligned_apk="aligned-apks/${filename%.apk}-aligned.apk"
+            signed_apk="signed-apks/${filename%.apk}-signed.apk"
+            "$build_tools_dir/zipalign" -p -f 4 "$apk" "$aligned_apk"
+            "$build_tools_dir/apksigner" sign \
+              --ks "$KEYSTORE_PATH" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$signed_apk" \
+              "$aligned_apk"
+            "$build_tools_dir/apksigner" verify --print-certs "$signed_apk"
+          done
+
+      - name: Upload signed APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: findroid-signed-release-apks
+          path: signed-apks/*.apk
+
+      - name: Compute release metadata
+        id: release_meta
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          tag="random-playback-${GITHUB_RUN_NUMBER}-${short_sha}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "name=Findroid random playback ${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: signed-apks/*.apk
+          body: |
+            Automated signed APK build for the random playback feature.
+
+            If repository signing secrets are not configured, this release is signed with a temporary CI keystore and will not update installs signed with another certificate.

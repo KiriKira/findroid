@@ -167,10 +167,20 @@ constructor(
         }
     }
 
-    fun initializePlayer(itemId: UUID, itemKind: String, startFromBeginning: Boolean) {
+    fun initializePlayer(
+        itemId: UUID,
+        itemKind: String,
+        startFromBeginning: Boolean,
+        randomParentId: UUID? = null,
+        randomItemKinds: List<String> = emptyList(),
+    ) {
         player.addListener(this)
 
         viewModelScope.launch {
+            val randomIncludeTypes =
+                randomItemKinds.mapNotNull { itemKindName ->
+                    runCatching { BaseItemKind.fromName(itemKindName) }.getOrNull()
+                }
             val startItem =
                 try {
                     playlistManager.getInitialItem(
@@ -178,6 +188,8 @@ constructor(
                         itemKind = BaseItemKind.fromName(itemKind),
                         mediaSourceIndex = null,
                         startFromBeginning = startFromBeginning,
+                        randomParentId = randomParentId,
+                        randomIncludeTypes = randomIncludeTypes,
                     )
                 } catch (e: Exception) {
                     Timber.e(e)

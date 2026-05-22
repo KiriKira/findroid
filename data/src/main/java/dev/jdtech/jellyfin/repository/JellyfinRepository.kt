@@ -55,6 +55,13 @@ interface JellyfinRepository {
         sortOrder: SortOrder = SortOrder.ASCENDING,
     ): Flow<PagingData<FindroidItem>>
 
+    suspend fun getRandomItem(
+        parentId: UUID? = null,
+        includeTypes: List<BaseItemKind>,
+        recursive: Boolean = true,
+        excludeItemIds: Set<UUID> = emptySet(),
+    ): FindroidItem?
+
     suspend fun getPerson(personId: UUID): FindroidPerson
 
     suspend fun getPersonItems(

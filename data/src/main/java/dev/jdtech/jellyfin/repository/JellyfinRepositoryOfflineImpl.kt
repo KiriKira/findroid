@@ -98,6 +98,15 @@ class JellyfinRepositoryOfflineImpl(
         TODO("Not yet implemented")
     }
 
+    override suspend fun getRandomItem(
+        parentId: UUID?,
+        includeTypes: List<BaseItemKind>,
+        recursive: Boolean,
+        excludeItemIds: Set<UUID>,
+    ): FindroidItem? {
+        return null
+    }
+
     override suspend fun getPerson(personId: UUID): FindroidPerson {
         TODO("Not yet implemented")
     }

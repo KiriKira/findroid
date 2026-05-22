@@ -5,14 +5,19 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.cachedIn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.FindroidEpisode
+import dev.jdtech.jellyfin.models.FindroidItem
+import dev.jdtech.jellyfin.models.FindroidMovie
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
 
@@ -26,6 +31,9 @@ constructor(
     private val _state = MutableStateFlow(LibraryState())
     val state = _state.asStateFlow()
 
+    private val eventsChannel = Channel<LibraryEvent>()
+    val events = eventsChannel.receiveAsFlow()
+
     lateinit var parentId: UUID
     lateinit var libraryType: CollectionType
 
@@ -38,16 +46,7 @@ constructor(
     }
 
     fun loadItems() {
-        val itemType =
-            when (libraryType) {
-                CollectionType.Movies -> listOf(BaseItemKind.MOVIE)
-                CollectionType.TvShows -> listOf(BaseItemKind.SERIES)
-                CollectionType.BoxSets -> listOf(BaseItemKind.BOX_SET)
-                CollectionType.Mixed,
-                CollectionType.Folders ->
-                    listOf(BaseItemKind.FOLDER, BaseItemKind.MOVIE, BaseItemKind.SERIES)
-                else -> null
-            }
+        val itemType = getLibraryItemTypes()
 
         val recursive = itemType == null || !itemType.contains(BaseItemKind.FOLDER)
 
@@ -99,8 +98,70 @@ constructor(
         }
     }
 
+    private fun getLibraryItemTypes(): List<BaseItemKind>? {
+        return when (libraryType) {
+            CollectionType.Movies -> listOf(BaseItemKind.MOVIE)
+            CollectionType.TvShows -> listOf(BaseItemKind.SERIES)
+            CollectionType.BoxSets -> listOf(BaseItemKind.BOX_SET)
+            CollectionType.Mixed,
+            CollectionType.Folders ->
+                listOf(BaseItemKind.FOLDER, BaseItemKind.MOVIE, BaseItemKind.SERIES)
+            else -> null
+        }
+    }
+
+    private fun getRandomItemTypes(): List<BaseItemKind> {
+        return when (libraryType) {
+            CollectionType.Movies -> listOf(BaseItemKind.MOVIE)
+            CollectionType.TvShows -> listOf(BaseItemKind.EPISODE)
+            CollectionType.BoxSets,
+            CollectionType.Mixed,
+            CollectionType.Folders -> listOf(BaseItemKind.MOVIE, BaseItemKind.EPISODE)
+            else -> emptyList()
+        }
+    }
+
+    private fun FindroidItem.toBaseItemKind(): BaseItemKind? {
+        return when (this) {
+            is FindroidMovie -> BaseItemKind.MOVIE
+            is FindroidEpisode -> BaseItemKind.EPISODE
+            else -> null
+        }
+    }
+
+    private fun playRandomItem() {
+        viewModelScope.launch {
+            val includeTypes = getRandomItemTypes()
+            if (includeTypes.isEmpty()) {
+                return@launch
+            }
+
+            try {
+                val item =
+                    jellyfinRepository.getRandomItem(
+                        parentId = parentId,
+                        includeTypes = includeTypes,
+                        recursive = true,
+                    )
+                val itemKind = item?.toBaseItemKind() ?: return@launch
+
+                eventsChannel.send(
+                    LibraryEvent.PlayRandomItem(
+                        itemId = item.id,
+                        itemKind = itemKind,
+                        parentId = parentId,
+                        includeTypes = includeTypes,
+                    )
+                )
+            } catch (e: Exception) {
+                _state.emit(_state.value.copy(error = e))
+            }
+        }
+    }
+
     fun onAction(action: LibraryAction) {
         when (action) {
+            is LibraryAction.OnRandomClick -> playRandomItem()
             is LibraryAction.ChangeSorting -> {
                 if (action.sortBy != this.sortBy || action.sortOrder != this.sortOrder) {
                     setSorting(sortBy = action.sortBy, sortOrder = action.sortOrder)

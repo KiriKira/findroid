@@ -23,16 +23,29 @@ import timber.log.Timber
 class PlaylistManager @Inject internal constructor(private val repository: JellyfinRepository) {
     private var startItem: FindroidItem? = null
     private var items: List<FindroidItem> = emptyList()
+    private var randomParentId: UUID? = null
+    private var randomIncludeTypes: List<BaseItemKind> = emptyList()
     private val playerItems: MutableList<PlayerItem> = mutableListOf()
     var currentItemIndex: Int = 0
+
+    private val isRandomPlayback: Boolean
+        get() = randomParentId != null && randomIncludeTypes.isNotEmpty()
 
     suspend fun getInitialItem(
         itemId: UUID,
         itemKind: BaseItemKind,
         mediaSourceIndex: Int? = null,
         startFromBeginning: Boolean = false,
+        randomParentId: UUID? = null,
+        randomIncludeTypes: List<BaseItemKind> = emptyList(),
     ): PlayerItem? {
         Timber.d("Retrieving initial player item")
+
+        this.randomParentId = randomParentId
+        this.randomIncludeTypes = randomIncludeTypes
+        items = emptyList()
+        playerItems.clear()
+        currentItemIndex = 0
 
         val initialItem =
             when (itemKind) {
@@ -97,17 +110,22 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                 BaseItemKind.EPISODE -> {
                     val episode = repository.getEpisode(itemId)
 
-                    val episodes =
-                        repository
-                            .getEpisodes(
-                                seriesId = episode.seriesId,
-                                seasonId = episode.seasonId,
-                                fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
-                            )
-                            .filter { !it.missing }
+                    if (isRandomPlayback) {
+                        items = listOf(episode)
+                        episode
+                    } else {
+                        val episodes =
+                            repository
+                                .getEpisodes(
+                                    seriesId = episode.seriesId,
+                                    seasonId = episode.seasonId,
+                                    fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
+                                )
+                                .filter { !it.missing }
 
-                    items = episodes
-                    episode
+                        items = episodes
+                        episode
+                    }
                 }
                 else -> null
             }
@@ -130,6 +148,10 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
     suspend fun getPreviousPlayerItem(): PlayerItem? {
         Timber.d("Retrieving previous player item")
+
+        if (isRandomPlayback) {
+            return null
+        }
 
         val itemIndex = currentItemIndex - 1
         val playerItem =
@@ -165,6 +187,10 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
     suspend fun getNextPlayerItem(): PlayerItem? {
         Timber.d("Retrieving next player item")
 
+        if (isRandomPlayback) {
+            return getNextRandomPlayerItem()
+        }
+
         val itemIndex = currentItemIndex + 1
         val playerItem =
             when (startItem) {
@@ -192,6 +218,30 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         if (playerItem != null) {
             playerItems.add(playerItem)
         }
+
+        return playerItem
+    }
+
+    private suspend fun getNextRandomPlayerItem(): PlayerItem? {
+        val parentId = randomParentId ?: return null
+        val item =
+            repository.getRandomItem(
+                parentId = parentId,
+                includeTypes = randomIncludeTypes,
+                recursive = true,
+                excludeItemIds = playerItems.map { it.itemId }.toSet(),
+            ) ?: return null
+
+        val playerItem =
+            try {
+                item.toPlayerItem(null, 0L)
+            } catch (exception: Exception) {
+                Timber.e("Failed to retrieve random player item: $exception")
+                return null
+            }
+
+        items = items + item
+        playerItems.add(playerItem)
 
         return playerItem
     }

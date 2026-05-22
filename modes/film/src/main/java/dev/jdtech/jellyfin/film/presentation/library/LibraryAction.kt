@@ -9,5 +9,7 @@ sealed interface LibraryAction {
 
     data object OnBackClick : LibraryAction
 
+    data object OnRandomClick : LibraryAction
+
     data class ChangeSorting(val sortBy: SortBy, val sortOrder: SortOrder) : LibraryAction
 }

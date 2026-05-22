@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
@@ -39,9 +41,11 @@ import androidx.paging.LoadState
 import androidx.paging.PagingData
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
+import dev.jdtech.jellyfin.PlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyMovies
 import dev.jdtech.jellyfin.film.presentation.library.LibraryAction
+import dev.jdtech.jellyfin.film.presentation.library.LibraryEvent
 import dev.jdtech.jellyfin.film.presentation.library.LibraryState
 import dev.jdtech.jellyfin.film.presentation.library.LibraryViewModel
 import dev.jdtech.jellyfin.models.CollectionType
@@ -55,6 +59,7 @@ import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 import dev.jdtech.jellyfin.presentation.utils.plus
+import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -68,9 +73,27 @@ fun LibraryScreen(
     navigateBack: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     var initialLoad by rememberSaveable { mutableStateOf(true) }
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is LibraryEvent.PlayRandomItem -> {
+                val intent = Intent(context, PlayerActivity::class.java)
+                intent.putExtra("itemId", event.itemId.toString())
+                intent.putExtra("itemKind", event.itemKind.serialName)
+                intent.putExtra("startFromBeginning", false)
+                intent.putExtra("randomParentId", event.parentId.toString())
+                intent.putExtra(
+                    "randomItemKinds",
+                    event.includeTypes.map { it.serialName }.toTypedArray(),
+                )
+                context.startActivity(intent)
+            }
+        }
+    }
 
     LaunchedEffect(true) {
         viewModel.setup(parentId = libraryId, libraryType = libraryType)
@@ -129,6 +152,12 @@ private fun LibraryScreenLayout(
                     IconButton(onClick = { showSortByDialog = true }) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_arrow_down_up),
+                            contentDescription = null,
+                        )
+                    }
+                    IconButton(onClick = { onAction(LibraryAction.OnRandomClick) }) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_shuffle),
                             contentDescription = null,
                         )
                     }

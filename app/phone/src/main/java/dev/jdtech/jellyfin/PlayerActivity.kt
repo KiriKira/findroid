@@ -93,6 +93,8 @@ class PlayerActivity : BasePlayerActivity() {
         val itemId = UUID.fromString(intent.extras!!.getString("itemId"))
         val itemKind = intent.extras!!.getString("itemKind")
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
+        val randomParentId = intent.extras!!.getString("randomParentId")?.let(UUID::fromString)
+        val randomItemKinds = intent.extras!!.getStringArray("randomItemKinds")?.toList().orEmpty()
 
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -328,6 +330,8 @@ class PlayerActivity : BasePlayerActivity() {
             itemId = itemId,
             itemKind = itemKind ?: "",
             startFromBeginning = startFromBeginning,
+            randomParentId = randomParentId,
+            randomItemKinds = randomItemKinds,
         )
         hideSystemUI()
     }
@@ -339,11 +343,15 @@ class PlayerActivity : BasePlayerActivity() {
         val itemId = UUID.fromString(intent.extras!!.getString("itemId"))
         val itemKind = intent.extras!!.getString("itemKind")
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
+        val randomParentId = intent.extras!!.getString("randomParentId")?.let(UUID::fromString)
+        val randomItemKinds = intent.extras!!.getStringArray("randomItemKinds")?.toList().orEmpty()
 
         viewModel.initializePlayer(
             itemId = itemId,
             itemKind = itemKind ?: "",
             startFromBeginning = startFromBeginning,
+            randomParentId = randomParentId,
+            randomItemKinds = randomItemKinds,
         )
     }
 
