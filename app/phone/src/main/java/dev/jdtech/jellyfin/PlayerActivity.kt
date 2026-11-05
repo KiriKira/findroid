@@ -87,6 +87,11 @@ class PlayerActivity : BasePlayerActivity() {
         }
     }
 
+    override fun onPause() {
+        playerGestureHelper?.cancelSpeedIncrease()
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -288,6 +293,7 @@ class PlayerActivity : BasePlayerActivity() {
         val lockedLayout = findViewById<FrameLayout>(R.id.locked_player_view)
 
         lockButton.setOnClickListener {
+            playerGestureHelper?.cancelSpeedIncrease()
             exoPlayerControlView.visibility = View.GONE
             lockedLayout.visibility = View.VISIBLE
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
@@ -439,6 +445,7 @@ class PlayerActivity : BasePlayerActivity() {
         viewModel.isInPictureInPictureMode = isInPictureInPictureMode
         when (isInPictureInPictureMode) {
             true -> {
+                playerGestureHelper?.cancelSpeedIncrease()
                 binding.playerView.useController = false
                 skipSegmentButton.isVisible = false
 
