@@ -19,6 +19,8 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import androidx.core.view.isVisible
+import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.load
@@ -63,8 +65,33 @@ class PlayerGestureHelper(
 
     private var lastScaleEvent: Long = 0
 
-    private var playbackSpeedIncrease: Float = 2f
-    private var lastPlaybackSpeed: Float = 0f
+    // Each additional second of holding increases the temporary speed, capped at 16x.
+    private val playbackSpeedSteps = floatArrayOf(2f, 3f, 4f, 6f, 8f, 12f, 16f)
+    private var playbackSpeedStep = -1
+    private var lastPlaybackSpeed = 0f
+    private var originalTrackSelectionParameters: TrackSelectionParameters? = null
+    private val increasePlaybackSpeedAction =
+        object : Runnable {
+            override fun run() {
+                if (lastPlaybackSpeed <= 0f) return
+                if (
+                    isControlsLocked ||
+                        !playerView.useController ||
+                        playerView.player?.isPlaying != true
+                ) {
+                    cancelSpeedIncrease()
+                    return
+                }
+
+                if (playbackSpeedStep < playbackSpeedSteps.lastIndex) {
+                    playbackSpeedStep++
+                    showSpeedIncrease(playbackSpeedSteps[playbackSpeedStep])
+                    if (playbackSpeedStep < playbackSpeedSteps.lastIndex) {
+                        playerView.postDelayed(this, 1000L)
+                    }
+                }
+            }
+        }
 
     private val screenWidth = Resources.getSystem().displayMetrics.widthPixels
     private val screenHeight = Resources.getSystem().displayMetrics.heightPixels
@@ -134,16 +161,61 @@ class PlayerGestureHelper(
             },
         )
 
-    @SuppressLint("SetTextI18n")
     private fun enableSpeedIncrease() {
-        playerView.player?.let {
-            if (it.isPlaying) {
-                lastPlaybackSpeed = it.playbackParameters.speed
-                it.setPlaybackSpeed(playbackSpeedIncrease)
-                activity.binding.gestureSpeedText.text = playbackSpeedIncrease.toString() + "x"
-                activity.binding.gestureSpeedLayout.visibility = View.VISIBLE
+        val player = playerView.player ?: return
+        if (!player.isPlaying || lastPlaybackSpeed > 0f) return
+
+        lastPlaybackSpeed = player.playbackParameters.speed
+        playbackSpeedStep = 0
+        showSpeedIncrease(playbackSpeedSteps[playbackSpeedStep])
+        playerView.postDelayed(increasePlaybackSpeedAction, 1000L)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun showSpeedIncrease(speed: Float) {
+        // Media3's default audio sink caps playback at 8x. At higher speeds, disable
+        // ExoPlayer's audio renderer so the video clock can run at 12x/16x.
+        updateFastPlaybackAudio(speed)
+        playerView.player?.setPlaybackSpeed(speed)
+        activity.binding.gestureSpeedText.text = "${speed.toInt()}x"
+        activity.binding.gestureSpeedLayout.visibility = View.VISIBLE
+    }
+
+    private fun updateFastPlaybackAudio(speed: Float) {
+        val player = playerView.player ?: return
+        if (player is MPVPlayer) return
+
+        if (speed > 8f) {
+            if (originalTrackSelectionParameters == null) {
+                originalTrackSelectionParameters = player.trackSelectionParameters
+                player.trackSelectionParameters =
+                    player.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                        .build()
             }
+        } else {
+            restoreFastPlaybackAudio()
         }
+    }
+
+    private fun restoreFastPlaybackAudio() {
+        originalTrackSelectionParameters?.let { parameters ->
+            playerView.player?.let { it.trackSelectionParameters = parameters }
+            originalTrackSelectionParameters = null
+        }
+    }
+
+    /** Restore the original playback speed whenever the hold gesture ends or is interrupted. */
+    fun cancelSpeedIncrease() {
+        playerView.removeCallbacks(increasePlaybackSpeedAction)
+        if (lastPlaybackSpeed > 0f) {
+            playerView.player?.setPlaybackSpeed(lastPlaybackSpeed)
+            lastPlaybackSpeed = 0f
+        }
+        restoreFastPlaybackAudio()
+        playbackSpeedStep = -1
+        activity.binding.gestureSpeedLayout.visibility = View.GONE
     }
 
     private fun handleChapterSkip(e: MotionEvent) {
@@ -495,12 +567,11 @@ class PlayerGestureHelper(
             currentNumberOfPointers = 0
         }
         if (
-            lastPlaybackSpeed > 0 &&
-                (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL)
+            event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL ||
+                event.actionMasked == MotionEvent.ACTION_POINTER_DOWN
         ) {
-            playerView.player?.setPlaybackSpeed(lastPlaybackSpeed)
-            lastPlaybackSpeed = 0f
-            activity.binding.gestureSpeedLayout.visibility = View.GONE
+            cancelSpeedIncrease()
         }
     }
 
@@ -585,13 +656,17 @@ class PlayerGestureHelper(
         playerView.setOnTouchListener { _, event ->
             if (playerView.useController) {
                 currentNumberOfPointers = event.pointerCount
+                // Always forward pointer changes so the long-press detector can cancel itself.
+                tapGestureDetector.onTouchEvent(event)
                 when (event.pointerCount) {
                     1 -> {
-                        tapGestureDetector.onTouchEvent(event)
-                        if (appPreferences.getValue(appPreferences.playerGesturesVB))
-                            vbGestureDetector.onTouchEvent(event)
-                        if (appPreferences.getValue(appPreferences.playerGesturesSeek))
-                            seekGestureDetector.onTouchEvent(event)
+                        // Holding for fast playback must not trigger swipe seek/volume gestures.
+                        if (lastPlaybackSpeed <= 0f) {
+                            if (appPreferences.getValue(appPreferences.playerGesturesVB))
+                                vbGestureDetector.onTouchEvent(event)
+                            if (appPreferences.getValue(appPreferences.playerGesturesSeek))
+                                seekGestureDetector.onTouchEvent(event)
+                        }
                     }
                     2 -> {
                         if (appPreferences.getValue(appPreferences.playerGesturesZoom))
