@@ -201,7 +201,7 @@ class PlayerGestureHelper(
 
     private fun restoreFastPlaybackAudio() {
         originalTrackSelectionParameters?.let { parameters ->
-            playerView.player?.trackSelectionParameters = parameters
+            playerView.player?.let { it.trackSelectionParameters = parameters }
             originalTrackSelectionParameters = null
         }
     }
