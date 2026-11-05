@@ -19,6 +19,8 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import androidx.core.view.isVisible
+import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.load
@@ -67,6 +69,7 @@ class PlayerGestureHelper(
     private val playbackSpeedSteps = floatArrayOf(2f, 3f, 4f, 6f, 8f, 12f, 16f)
     private var playbackSpeedStep = -1
     private var lastPlaybackSpeed = 0f
+    private var originalTrackSelectionParameters: TrackSelectionParameters? = null
     private val increasePlaybackSpeedAction =
         object : Runnable {
             override fun run() {
@@ -170,9 +173,37 @@ class PlayerGestureHelper(
 
     @SuppressLint("SetTextI18n")
     private fun showSpeedIncrease(speed: Float) {
+        // Media3's default audio sink caps playback at 8x. At higher speeds, disable
+        // ExoPlayer's audio renderer so the video clock can run at 12x/16x.
+        updateFastPlaybackAudio(speed)
         playerView.player?.setPlaybackSpeed(speed)
         activity.binding.gestureSpeedText.text = "${speed.toInt()}x"
         activity.binding.gestureSpeedLayout.visibility = View.VISIBLE
+    }
+
+    private fun updateFastPlaybackAudio(speed: Float) {
+        val player = playerView.player ?: return
+        if (player is MPVPlayer) return
+
+        if (speed > 8f) {
+            if (originalTrackSelectionParameters == null) {
+                originalTrackSelectionParameters = player.trackSelectionParameters
+                player.trackSelectionParameters =
+                    player.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                        .build()
+            }
+        } else {
+            restoreFastPlaybackAudio()
+        }
+    }
+
+    private fun restoreFastPlaybackAudio() {
+        originalTrackSelectionParameters?.let { parameters ->
+            playerView.player?.trackSelectionParameters = parameters
+            originalTrackSelectionParameters = null
+        }
     }
 
     /** Restore the original playback speed whenever the hold gesture ends or is interrupted. */
@@ -182,6 +213,7 @@ class PlayerGestureHelper(
             playerView.player?.setPlaybackSpeed(lastPlaybackSpeed)
             lastPlaybackSpeed = 0f
         }
+        restoreFastPlaybackAudio()
         playbackSpeedStep = -1
         activity.binding.gestureSpeedLayout.visibility = View.GONE
     }
